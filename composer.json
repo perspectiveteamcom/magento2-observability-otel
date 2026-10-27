@@ -1,0 +1,12 @@
+{
+  "name": "perspective/module-observability-otel",
+  "description": "PHP 7.4-8.2 compatibility entry point for Magento server observability",
+  "type": "metapackage",
+  "license": "proprietary",
+  "homepage": "https://github.com/perspectiveteamcom/magento2-observability-otel",
+  "require": {
+    "php": ">=7.4 <8.3",
+    "magento/framework": "^103.0",
+    "perspective/module-observability-compat": "^1.0"
+  }
+}
