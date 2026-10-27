@@ -1,0 +1,173 @@
+--- a/src/Magento2Instrumentation.php
++++ b/src/Magento2Instrumentation.php
+@@ -10,13 +10,15 @@
+ use Magento\Framework\App\FrontController;
+ use Magento\Framework\App\Http;
+ use Magento\Framework\App\Request\Http as HttpRequest;
+-use Magento\Framework\App\Response\Http as HttpResponse;
++use Magento\Framework\App\Response\HttpInterface;
+ use Magento\Framework\App\ResponseInterface;
+ use Magento\Framework\App\View;
+ use Magento\Framework\Controller\ResultInterface;
+ use Magento\Framework\Event\InvokerInterface;
+ use Magento\Framework\Event\Manager;
+ use Magento\Framework\View\Element\Template;
++use Magento\Framework\Webapi\Rest\Response as RestResponse;
++use OpenTelemetry\Context\ScopeInterface;
+ use Nyholm\Psr7\Factory\Psr17Factory;
+ use Nyholm\Psr7Server\ServerRequestCreator;
+ use OpenTelemetry\API\Behavior\LogsMessagesTrait;
+@@ -79,6 +81,65 @@
+             }
+         );
+ 
++        // REST errors are rendered in sendResponse(), after Http::launch().
++        // Retain only their detached request scopes until the final status is known.
++        $pendingResponses = new \WeakMap();
++        $finishHttpRequest = static function (ResponseInterface|ResultInterface|null $response, ?Throwable $exception, ScopeInterface $scope) use (&$histogram, $instrumentation): void {
++            $requestEnd = Clock::getDefault()->now();
++            $span = Span::fromContext($scope->context());
++
++            $responseMeta = [];
++
++            if ($exception) {
++                $instrumentation->logger()->logRecordBuilder()->setException($exception)->emit();
++                $span->setStatus(StatusCode::STATUS_ERROR, $exception->getMessage());
++                $responseMeta[ErrorAttributes::ERROR_TYPE] = $exception::class;
++            }
++            if ($response instanceof HttpInterface) {
++                $statusCode = $response->getHttpResponseCode();
++                $span->setAttribute(HttpAttributes::HTTP_RESPONSE_STATUS_CODE, $statusCode);
++                $responseMeta[HttpAttributes::HTTP_RESPONSE_STATUS_CODE] = $statusCode;
++                if ($statusCode >= 500 && !$exception) {
++                    $span->setStatus(StatusCode::STATUS_ERROR);
++                    $responseMeta[ErrorAttributes::ERROR_TYPE] = $statusCode;
++                }
++            }
++            //https://opentelemetry.io/docs/specs/semconv/http/http-metrics/#http-server
++            /** @psalm-suppress MixedAssignment */
++            $histogram ??= $instrumentation->meter()->createHistogram(
++                'http.server.request.duration',
++                's',
++                'Duration of HTTP server requests.',
++                ['ExplicitBucketBoundaries' => [0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10]]
++            );
++
++            $requestMeta = $scope->offsetGet('requestMeta');
++            /** @var int $requestStart */
++            $requestStart = $scope->offsetGet('requestStart');
++            /** @psalm-suppress PossiblyInvalidArgument */
++            $histogram->record((float) (($requestEnd - $requestStart) / ClockInterface::NANOS_PER_SECOND), array_merge((array) $requestMeta, $responseMeta));
++            $span->end($requestEnd);
++        };
++        hook(
++            ResponseInterface::class,
++            'sendResponse',
++            post: static function (ResponseInterface $response, array $params, mixed $result, ?Throwable $exception) use ($pendingResponses, $finishHttpRequest): void {
++                if (!isset($pendingResponses[$response])) {
++                    return;
++                }
++                $scope = $pendingResponses[$response];
++                unset($pendingResponses[$response]);
++                $finishHttpRequest($response, $exception, $scope);
++            }
++        );
++        // A custom bootstrap may return without calling sendResponse().
++        register_shutdown_function(static function () use ($pendingResponses, $finishHttpRequest): void {
++            foreach ($pendingResponses as $response => $scope) {
++                unset($pendingResponses[$response]);
++                $finishHttpRequest($response, null, $scope);
++            }
++        });
++
+         hook(
+             Http::class,
+             'launch',
+@@ -134,51 +195,23 @@
+                 $scope->offsetSet('requestMeta', $requestMeta);
+                 $scope->offsetSet('requestStart', $requestStart);
+             },
+-            post: static function (Http $http, array $params, ResultInterface|HttpResponse|null $response, ?Throwable $exception, string $class) use (&$histogram, $instrumentation) {
++            post: static function (Http $http, array $params, ResultInterface|ResponseInterface|null $response, ?Throwable $exception, string $class) use ($pendingResponses, $finishHttpRequest) {
+                 if ($class !== Http::class) {
+                     return;
+                 }
+-                $requestEnd = Clock::getDefault()->now();
+-                $scope = Context::storage()->scope();
+-                if (!$scope) {
+-                    return;
+-                }
+-                $scope->detach();
+-                $span = Span::fromContext($scope->context());
+-
+-                $responseMeta = [];
+-
+-                if ($exception) {
+-                    $instrumentation->logger()->logRecordBuilder()->setException($exception)->emit();
+-                    $span->setStatus(StatusCode::STATUS_ERROR, $exception->getMessage());
+-                    $responseMeta[ErrorAttributes::ERROR_TYPE] = $exception::class;
+-                }
+-                if ($response instanceof HttpResponse) {
+-                    $statusCode = $response->getStatusCode();
+-                    $span->setAttribute(HttpAttributes::HTTP_RESPONSE_STATUS_CODE, $statusCode);
+-                    $responseMeta[HttpAttributes::HTTP_RESPONSE_STATUS_CODE] = $statusCode;
+-                    if ($statusCode >= 500 && !$exception) {
+-                        $span->setStatus(StatusCode::STATUS_ERROR);
+-                        $responseMeta[ErrorAttributes::ERROR_TYPE] = $statusCode;
+-                    }
+-                    $prop = Globals::responsePropagator();
+-                    $prop->inject($response, ResponsePropagationSetter::getInstance(), $scope->context());
+-                }
+-                //https://opentelemetry.io/docs/specs/semconv/http/http-metrics/#http-server
+-                /** @psalm-suppress MixedAssignment */
+-                $histogram ??= $instrumentation->meter()->createHistogram(
+-                    'http.server.request.duration',
+-                    's',
+-                    'Duration of HTTP server requests.',
+-                    ['ExplicitBucketBoundaries' => [0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10]]
+-                );
+-
+-                $requestMeta = $scope->offsetGet('requestMeta');
+-                /** @var int $requestStart */
+-                $requestStart = $scope->offsetGet('requestStart');
+-                /** @psalm-suppress PossiblyInvalidArgument */
+-                $histogram->record((float) (($requestEnd - $requestStart) / ClockInterface::NANOS_PER_SECOND), array_merge((array) $requestMeta, $responseMeta));
+-                $span->end($requestEnd);
++                $scope = Context::storage()->scope();
++                if (!$scope) {
++                    return;
++                }
++                $scope->detach();
++                if ($response instanceof HttpInterface) {
++                    Globals::responsePropagator()->inject($response, ResponsePropagationSetter::getInstance(), $scope->context());
++                }
++                if ($response instanceof RestResponse && !$exception) {
++                    $pendingResponses[$response] = $scope;
++                    return;
++                }
++                $finishHttpRequest($response, $exception, $scope);
+             }
+         );
+ 
+--- a/src/ResponsePropagationSetter.php
++++ b/src/ResponsePropagationSetter.php
+@@ -4,7 +4,7 @@
+ 
+ namespace OpenTelemetry\Contrib\Instrumentation\Magento2;
+ 
+-use Magento\Framework\App\Response\Http as HttpResponse;
++use Magento\Framework\App\Response\HttpInterface;
+ use OpenTelemetry\Context\Propagation\PropagationSetterInterface;
+ use Override;
+ 
+@@ -25,8 +25,8 @@
+     #[Override]
+     public function set(mixed &$carrier, string $key, string $value): void
+     {
+-        if ($carrier instanceof HttpResponse) {
+-            $carrier = $carrier->setHeader($key, $value);
++        if ($carrier instanceof HttpInterface) {
++            $carrier->setHeader($key, $value);
+         }
+     }
+ }

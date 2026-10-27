@@ -1,0 +1,8 @@
+{
+  "package": "open-telemetry/opentelemetry-auto-magento2",
+  "source_reference": "9fc7ad2c5bb3221f29730f6e469d474b5908f4f9",
+  "files": {
+    "src/Magento2Instrumentation.php": "e7aad8ac43b041fd44f8583378011cbea6b97ae0c9436c6ecd3ea63304a5bfdd",
+    "src/ResponsePropagationSetter.php": "eeb9e526e901d19626d5b0ec6e410b8bc57a27d483c0b49b855f733b436f2f41"
+  }
+}
