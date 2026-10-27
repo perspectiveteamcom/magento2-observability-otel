@@ -19,12 +19,12 @@
 
 Команди виконуйте в корені Magento під тим самим PHP, що й застосунок. У Warden запускайте їх через `warden env exec -T php-fpm`; у Docker/Kubernetes використовуйте PHP-контейнер збірки. Не змінюйте файли робочого `vendor` вручну. Для команди зі змінною оточення синтаксис Warden такий: `warden env exec -T php-fpm env OTEL_PHP_AUTOLOAD_ENABLED=false composer require ...`.
 
-Composer читає VCS-репозиторії лише з кореневого `composer.json`. Додайте їх командами нижче; вони зберігають решту репозиторіїв магазину.
+Composer читає VCS-репозиторії лише з кореневого `composer.json`. Додайте їх командами нижче; вони зберігають решту репозиторіїв магазину. Тип `git` читає теги напряму через Git без запитів до GitHub API за метаданими цих пакетів.
 
 ```bash
-composer config repositories.perspective-observability vcs https://github.com/perspectiveteamcom/magento2-observability.git
-composer config repositories.perspective-observability-otel vcs https://github.com/perspectiveteamcom/magento2-observability-otel.git
-composer config repositories.perspective-observability-compat vcs https://github.com/perspectiveteamcom/magento2-observability-compat.git
+composer config repositories.perspective-observability git https://github.com/perspectiveteamcom/magento2-observability.git
+composer config repositories.perspective-observability-otel git https://github.com/perspectiveteamcom/magento2-observability-otel.git
+composer config repositories.perspective-observability-compat git https://github.com/perspectiveteamcom/magento2-observability-compat.git
 ```
 На PHP 8.3-8.5 спочатку встановіть `ext-opentelemetry` 1.4+ для FPM, CLI та consumers. `protobuf` прискорює серіалізацію; Excimer потрібен для профілів. CLI та FPM можуть читати різні `php.ini`: перевірте `php --ini` та конфігурацію свого FPM-бінарника. Composer перевіряє наявність розширень, але не встановлює їх.
 
@@ -59,7 +59,7 @@ php bin/magento setup:upgrade
 
 ### REST-патч у 2.x
 
-Пакет вимагає стабільний `open-telemetry/opentelemetry-auto-magento2` 0.1.0. Його REST-виправлення оголошено в `composer.json` цього пакета: Composer Patches завантажує файл із тега релізу, перевіряє SHA-256 та застосовує його. Вручну копіювати патч або додавати його до кореневого `extra.patches` не потрібно. У 1.x патча й залежності Composer Patches немає.
+Пакет вимагає стабільний `open-telemetry/opentelemetry-auto-magento2` 0.1.0. Його REST-виправлення оголошено в `composer.json` цього пакета: Composer Patches завантажує файл із зафіксованого тега, перевіряє SHA-256 та застосовує його. Вручну копіювати патч або додавати його до кореневого `extra.patches` не потрібно. У 1.x патча й залежності Composer Patches немає.
 
 Для проєкту, де вже є `patches.lock.json`, після додавання пакета виконайте у збірці:
 
