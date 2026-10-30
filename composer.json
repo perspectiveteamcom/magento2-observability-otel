@@ -44,9 +44,9 @@
     "patches": {
       "open-telemetry/opentelemetry-auto-magento2": [
         {
-          "description": "Accept Magento response interfaces and finalize REST status after sendResponse",
-          "url": "https://raw.githubusercontent.com/perspectiveteamcom/magento2-observability-otel/v2.0.0/patches/magento2-http-response-interface.patch",
-          "sha256": "a655d67dece35a8a0105995a0840dc830511a612468c72324487a6da908a5d9f",
+          "description": "Safe REST responses and optional Magento detail spans without generated wrapper duplicates",
+          "url": "https://raw.githubusercontent.com/perspectiveteamcom/magento2-observability-otel/v2.1.0/patches/magento2-http-response-interface.patch",
+          "sha256": "e8c454d832aabe545d8313d945b59a80baffe10a8e3937711d7469e12c29a43b",
           "depth": 1
         }
       ]

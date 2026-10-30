@@ -78,6 +78,25 @@ php vendor/perspective/module-observability-otel/verify-patch.php
 
 Вона має завершитися повідомленням `PASS Magento REST instrumentation patch`. Перед робочим запуском перевірте REST JSON і статуси 200/401/404/500, зокрема відповіді `Magento\Framework\Webapi\Rest\Response\Proxy`.
 
+## Трасування SQL, Redis та деталізація у 2.1
+
+PDO spans містять `db.query.normalized`, `db.operation.name`, `db.collection.name` та `db.query.summary`. Нормалізатор замінює рядкові й числові значення на `?`, прибирає коментарі й bind values; сирі `db.statement`/`db.query.text` видаляються перед OTLP-експортом. Нерозпізнані або завеликі запити не отримують тексту. Таблиця — перша розпізнана, не повний SQL-план.
+
+`Redis GET`, `Redis SET` тощо показують час команд Credis, phpredis/RedisCluster та Predis. Ключі, значення, паролі й Lua-код не збираються. Вкладений виклик драйвера не дублює Credis span. Pipeline вимірюється як PHP-виклик, а не як окремий мережевий round trip.
+
+Event dispatch, observers і templates вимкнені типово: це зменшує кількість рутинних spans. Увімкніть `OBSERVABILITY_TRACE_EVENTS=true` або `OBSERVABILITY_TRACE_TEMPLATES=true` для конкретного дослідження. `OBSERVABILITY_TRACE_REDIS=false` вимикає Redis hooks; `OBSERVABILITY_SQL_DETAILS=false` прибирає SQL shape, залишаючи часові spans. Після зміни оточення перезапустіть PHP-процеси.
+
+Для оновлення з 2.0.x виконайте в новій збірці:
+
+```bash
+OTEL_PHP_AUTOLOAD_ENABLED=false composer require 'perspective/module-observability-otel:^2.1' --with-dependencies
+OTEL_PHP_AUTOLOAD_ENABLED=false composer patches-relock
+OTEL_PHP_AUTOLOAD_ENABLED=false composer reinstall open-telemetry/opentelemetry-auto-magento2 --prefer-dist
+OTEL_PHP_AUTOLOAD_ENABLED=false php vendor/perspective/module-observability-otel/verify-patch.php
+```
+
+Збережіть усі Composer lock-файли й виконайте штатний deployment із перезапуском FPM та consumers. У Jaeger кількість PDO spans включає prepare та fetch: для кількості SQL виконань рахуйте execute/query/exec. Старі траси не зміняться.
+
 ## Налаштування
 
 | Змінна | Призначення |

@@ -36,6 +36,12 @@ final class Bootstrap
             }
             self::$registered = true;
             \OpenTelemetry\SDK\Registry::registerTransportFactory('http', LocalTransportFactory::class, true);
+            \OpenTelemetry\SDK\Registry::registerSpanExporterFactory('otlp', SqlSpanExporterFactory::class, true);
+            // Add query shape to execute/fetch spans before the exporter removes literal values.
+            if (getenv('OTEL_PHP_INSTRUMENTATION_PDO_DISTRIBUTE_STATEMENT_TO_LINKED_SPANS') === false) {
+                putenv('OTEL_PHP_INSTRUMENTATION_PDO_DISTRIBUTE_STATEMENT_TO_LINKED_SPANS=true');
+            }
+            RedisInstrumentation::register();
             Instrumentation::register();
             \Perspective\Observability\Profiler::register();
         } catch (\Throwable $error) {

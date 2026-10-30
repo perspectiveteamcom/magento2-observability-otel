@@ -149,6 +149,89 @@
              }
          );
  
+@@ -277,10 +310,12 @@
+             }
+         );
+ 
++        if (filter_var(getenv('OBSERVABILITY_TRACE_EVENTS'), FILTER_VALIDATE_BOOLEAN)) {
+         hook(
+             Manager::class,
+             'dispatch',
+             pre: static function (Manager $manager, array $params, string $class, string $function, ?string $filename, ?int $lineno) use ($instrumentation) {
++                if (preg_match('/\\\\(?:Proxy|Interceptor)$/', $class)) { return; }
+                 $eventName = is_string($params[0]) && $params[0] !== '' ? $params[0] : 'unknown';
+                 $span = $instrumentation->tracer()
+                     ->spanBuilder('event.dispatch ' . $eventName)
+@@ -291,7 +326,8 @@
+                     ->startSpan();
+                 Context::storage()->attach($span->storeInContext(Context::getCurrent()));
+             },
+-            post: static function (Manager $manager, array $params, mixed $void, ?Throwable $exception) {
++            post: static function (Manager $manager, array $params, mixed $void, ?Throwable $exception, string $class) {
++                if (preg_match('/\\\\(?:Proxy|Interceptor)$/', $class)) { return; }
+                 $scope = Context::storage()->scope();
+                 if (!$scope) {
+                     return;
+@@ -305,11 +341,14 @@
+                 $span->end();
+             }
+         );
+-
++        }
++
++        if (filter_var(getenv('OBSERVABILITY_TRACE_EVENTS'), FILTER_VALIDATE_BOOLEAN)) {
+         hook(
+             InvokerInterface::class,
+             'dispatch',
+             pre: static function (InvokerInterface $invokerInterface, array $params, string $class, string $function, ?string $filename, ?int $lineno) use ($instrumentation) {
++                if (preg_match('/\\\\(?:Proxy|Interceptor)$/', $class)) { return; }
+                 $configuration = is_array($params[0]) ? $params[0] : [];
+                 $observerName = (isset($configuration['name']) && is_string($configuration['name']) && $configuration['name'] !== '')
+                     ? $configuration['name']
+@@ -323,7 +362,8 @@
+                     ->startSpan();
+                 Context::storage()->attach($span->storeInContext(Context::getCurrent()));
+             },
+-            post: static function (InvokerInterface $invokerInterface, array $params, mixed $void, ?Throwable $exception) {
++            post: static function (InvokerInterface $invokerInterface, array $params, mixed $void, ?Throwable $exception, string $class) {
++                if (preg_match('/\\\\(?:Proxy|Interceptor)$/', $class)) { return; }
+                 $scope = Context::storage()->scope();
+                 if (!$scope) {
+                     return;
+@@ -337,11 +377,14 @@
+                 $span->end();
+             }
+         );
+-
++        }
++
++        if (filter_var(getenv('OBSERVABILITY_TRACE_TEMPLATES'), FILTER_VALIDATE_BOOLEAN)) {
+         hook(
+             Template::class,
+             'fetchView',
+             pre: static function (Template $template, array $params, string $class, string $function, ?string $filename, ?int $lineno) use ($instrumentation) {
++                if (preg_match('/\\\\(?:Proxy|Interceptor)$/', $class)) { return; }
+                 $templateFile = is_string($params[0]) ? $params[0] : null;
+                 $span = $instrumentation->tracer()
+                     ->spanBuilder('template ' . ($templateFile ?? 'unknown'))
+@@ -352,7 +395,8 @@
+                     ->startSpan();
+                 Context::storage()->attach($span->storeInContext(Context::getCurrent()));
+             },
+-            post: static function (Template $template, array $params, ?string $html, ?Throwable $exception) {
++            post: static function (Template $template, array $params, ?string $html, ?Throwable $exception, string $class) {
++                if (preg_match('/\\\\(?:Proxy|Interceptor)$/', $class)) { return; }
+                 $scope = Context::storage()->scope();
+                 if (!$scope) {
+                     return;
+@@ -366,6 +410,7 @@
+                 $span->end();
+             }
+         );
++        }
+ 
+         hook(
+             View::class,
 --- a/src/ResponsePropagationSetter.php
 +++ b/src/ResponsePropagationSetter.php
 @@ -4,7 +4,7 @@
