@@ -11,6 +11,7 @@ namespace Mumzworld\OpenTelemetry\Instrumentation\Core;
 
 use Magento\Framework\App\Bootstrap;
 use Magento\Framework\App\Http;
+use Magento\Framework\App\ResponseInterface;
 use Mumzworld\OpenTelemetry\Instrumentation\AbstractInstrumentation;
 use OpenTelemetry\API\Globals;
 use OpenTelemetry\API\Trace\Span;
@@ -40,8 +41,33 @@ class MagentoInstrumentation extends AbstractInstrumentation
     public static function register(): void
     {
         self::instrumentBootstrapRun();
+        self::instrumentHttpResponse();
         self::instrumentAppTerminate();
         self::instrumentHttpCatchException();
+    }
+
+    /** Record the HTTP response on the active request span. */
+    private static function instrumentHttpResponse(): void
+    {
+        hook(
+            Http::class,
+            'launch',
+            null,
+            static function (Http $subject, array $params, mixed $response, ?Throwable $exception) {
+                if (!$response instanceof ResponseInterface || !method_exists($response, 'getHttpResponseCode')) {
+                    return;
+                }
+                $code = (int) $response->getHttpResponseCode();
+                if ($code < 100 || $code > 599) {
+                    return;
+                }
+                $span = Span::getCurrent();
+                $span->setAttribute(TraceAttributes::HTTP_RESPONSE_STATUS_CODE, $code);
+                if ($code >= 500) {
+                    $span->setStatus(StatusCode::STATUS_ERROR);
+                }
+            },
+        );
     }
 
     /**
