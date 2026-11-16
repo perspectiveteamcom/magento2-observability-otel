@@ -11,6 +11,7 @@ namespace Mumzworld\OpenTelemetry\Instrumentation\Core;
 
 use Magento\Framework\App\Bootstrap;
 use Magento\Framework\App\Http;
+use Magento\Framework\App\Response\Http as HttpResponse;
 use Magento\Framework\App\ResponseInterface;
 use Mumzworld\OpenTelemetry\Instrumentation\AbstractInstrumentation;
 use OpenTelemetry\API\Globals;
@@ -49,6 +50,15 @@ class MagentoInstrumentation extends AbstractInstrumentation
     /** Record the HTTP response on the active request span. */
     private static function instrumentHttpResponse(): void
     {
+        // Exception handlers can send their response after launch() has thrown.
+        // Capture that response while the request span is still active too.
+        hook(
+            HttpResponse::class,
+            'sendResponse',
+            static function (HttpResponse $response) {
+                self::recordHttpStatus($response);
+            },
+        );
         hook(
             Http::class,
             'launch',
@@ -57,17 +67,22 @@ class MagentoInstrumentation extends AbstractInstrumentation
                 if (!$response instanceof ResponseInterface || !method_exists($response, 'getHttpResponseCode')) {
                     return;
                 }
-                $code = (int) $response->getHttpResponseCode();
-                if ($code < 100 || $code > 599) {
-                    return;
-                }
-                $span = Span::getCurrent();
-                $span->setAttribute(TraceAttributes::HTTP_RESPONSE_STATUS_CODE, $code);
-                if ($code >= 500) {
-                    $span->setStatus(StatusCode::STATUS_ERROR);
-                }
+                self::recordHttpStatus($response);
             },
         );
+    }
+
+    private static function recordHttpStatus(ResponseInterface $response): void
+    {
+        $code = (int) $response->getHttpResponseCode();
+        if ($code < 100 || $code > 599) {
+            return;
+        }
+        $span = Span::getCurrent();
+        $span->setAttribute(TraceAttributes::HTTP_RESPONSE_STATUS_CODE, $code);
+        if ($code >= 500) {
+            $span->setStatus(StatusCode::STATUS_ERROR);
+        }
     }
 
     /**
