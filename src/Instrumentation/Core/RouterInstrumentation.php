@@ -3,6 +3,7 @@ declare(strict_types=1);
 namespace Mumzworld\OpenTelemetry\Instrumentation\Core;
 use Magento\Framework\App\RouterInterface;
 use Mumzworld\OpenTelemetry\Instrumentation\AbstractInstrumentation;
+use OpenTelemetry\API\Trace\LocalRootSpan;
 use Throwable;
 use WeakMap;
 use function OpenTelemetry\Instrumentation\hook;
@@ -68,7 +69,20 @@ class RouterInstrumentation extends AbstractInstrumentation {
                 self::startSpanAndAttachToContext($builder);
                 self::markFrameStarted($subject);
             },
-            static function (RouterInterface $subject, array $params, mixed $result, ?Throwable $exception) { if (self::popFrame($subject)) { self::endSpan($exception); } }
+            static function (RouterInterface $subject, array $params, mixed $result, ?Throwable $exception) {
+                if (self::popFrame($subject)) { self::endSpan($exception); }
+                if ($exception || $result === null || !isset($params[0]) || !is_object($params[0]) || !method_exists($params[0], 'getFullActionName')) { return; }
+                try {
+                    $action = $params[0]->getFullActionName();
+                    if (is_string($action) && preg_match('/^[A-Za-z][A-Za-z0-9_]{0,127}$/D', $action)) {
+                        $root = LocalRootSpan::current();
+                        $root->setAttribute('magento.route', $action);
+                        $root->updateName($action);
+                    }
+                } catch (Throwable) {
+                    // Tracing must not change Magento's router result.
+                }
+            }
         );
     }
 }
