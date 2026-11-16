@@ -12,6 +12,7 @@ namespace Mumzworld\OpenTelemetry\Instrumentation\Core;
 use Magento\Framework\App\Bootstrap;
 use Magento\Framework\App\Http;
 use Mumzworld\OpenTelemetry\Instrumentation\AbstractInstrumentation;
+use OpenTelemetry\API\Globals;
 use OpenTelemetry\API\Trace\Span;
 use OpenTelemetry\API\Trace\SpanKind;
 use OpenTelemetry\API\Trace\StatusCode;
@@ -69,7 +70,23 @@ class MagentoInstrumentation extends AbstractInstrumentation
                     $lineno,
                 )->setSpanKind(SpanKind::KIND_INTERNAL);
 
-                self::startSpanAndAttachToContext($builder);
+                // The native SDK does not create an HTTP server span on its
+                // own. Join the incoming trace when there is no server span
+                // already active (for example one supplied by the distro).
+                $parent = null;
+                if (PHP_SAPI !== 'cli' && !Span::getCurrent()->getContext()->isValid()) {
+                    $carrier = [];
+                    foreach (Globals::propagator()->fields() as $field) {
+                        $key = 'HTTP_' . strtoupper(str_replace('-', '_', $field));
+                        if (isset($_SERVER[$key]) && is_string($_SERVER[$key])) {
+                            $carrier[$field] = $_SERVER[$key];
+                        }
+                    }
+                    $parent = Globals::propagator()->extract($carrier);
+                    $builder->setSpanKind(SpanKind::KIND_SERVER);
+                }
+
+                self::startSpanAndAttachToContext($builder, $parent);
             },
             static function (
                 Bootstrap   $subject,
