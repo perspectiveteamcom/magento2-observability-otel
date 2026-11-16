@@ -14,7 +14,6 @@
     "magento/framework": "^103.0",
     "open-telemetry/api": "^1.2",
     "open-telemetry/exporter-otlp": "^1.2",
-    "open-telemetry/opentelemetry-auto-pdo": "^0.2",
     "open-telemetry/sdk": "^1.2",
     "open-telemetry/sem-conv": "^1.30",
     "ext-opentelemetry": "*"
@@ -30,6 +29,9 @@
   },
   "minimum-stability": "dev",
   "prefer-stable": true,
+  "suggest": {
+    "open-telemetry/opentelemetry-auto-pdo": "Install with the standalone OpenTelemetry extension; the PHP distro already includes PDO instrumentation."
+  },
   "homepage": "https://github.com/perspectiveteamcom/magento2-observability-otel",
   "support": {
     "source": "https://github.com/perspectiveteamcom/magento2-observability-otel",

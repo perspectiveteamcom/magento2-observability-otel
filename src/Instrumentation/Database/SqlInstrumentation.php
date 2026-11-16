@@ -13,12 +13,13 @@ use Magento\Framework\DB\Adapter\Pdo\Mysql;
 use Magento\Framework\DB\Adapter\Pdo\Mysql\Interceptor as MysqlInterceptor;
 use Magento\Framework\DB\Select;
 use Mumzworld\OpenTelemetry\Instrumentation\AbstractInstrumentation;
-use Mumzworld\OpenTelemetry\Instrumentation\Util\SpanLimiter;
+use OpenTelemetry\API\Trace\LocalRootSpan;
 use OpenTelemetry\API\Trace\Span;
 use OpenTelemetry\API\Trace\SpanKind;
 use OpenTelemetry\Context\Context;
 use OpenTelemetry\SemConv\TraceAttributes;
 use Throwable;
+use WeakMap;
 use function OpenTelemetry\Instrumentation\hook;
 
 class SqlInstrumentation extends AbstractInstrumentation
@@ -26,6 +27,76 @@ class SqlInstrumentation extends AbstractInstrumentation
     public const INSTRUMENTATION_NAME = 'io.opentelemetry.contrib.php.magento.sql';
     private const SPAN_NAME_PREFIX = 'SQL:';
     private const SQL_QUERY_SPAN_LIMIT = 2048;
+
+    /** @var WeakMap<object, WeakMap<object, list<array{class: string, started: bool}>>>|null */
+    private static ?WeakMap $framesByContext = null;
+    private static ?object $mainContext = null;
+    /** @var WeakMap<object, int>|null */
+    private static ?WeakMap $countsByRoot = null;
+
+    private static function withinTraceLimit(): bool
+    {
+        $root = LocalRootSpan::current();
+        if (!$root->getContext()->isValid()) {
+            // With no active local root, each query starts its own trace.
+            return true;
+        }
+        $counts = self::$countsByRoot ??= new WeakMap();
+        $count = $counts[$root] ?? 0;
+        if ($count >= self::SQL_QUERY_SPAN_LIMIT) {
+            return false;
+        }
+        $counts[$root] = $count + 1;
+        return true;
+    }
+
+    /** Keep nested hooks separate for each Fiber and database adapter. */
+    private static function frames(): WeakMap
+    {
+        $context = \Fiber::getCurrent() ?? (self::$mainContext ??= new \stdClass());
+        $contexts = self::$framesByContext ??= new WeakMap();
+        if (!isset($contexts[$context])) {
+            $contexts[$context] = new WeakMap();
+        }
+        return $contexts[$context];
+    }
+
+    private static function pushFrame(Mysql $subject, string $class): bool
+    {
+        $frames = self::frames();
+        $stack = $frames[$subject] ?? [];
+        $previous = $stack ? $stack[count($stack) - 1]['class'] : null;
+        // Parent calls inside an interceptor are one operation. A recursive
+        // interceptor call from a plugin is a distinct nested operation.
+        $inherited = $previous !== null && $previous !== $class && is_subclass_of($previous, $class);
+        $stack[] = ['class' => $class, 'started' => false];
+        $frames[$subject] = $stack;
+        return $inherited;
+    }
+
+    private static function markFrameStarted(Mysql $subject): void
+    {
+        $frames = self::frames();
+        $stack = $frames[$subject];
+        $stack[count($stack) - 1]['started'] = true;
+        $frames[$subject] = $stack;
+    }
+
+    private static function popFrame(Mysql $subject): bool
+    {
+        $frames = self::frames();
+        $stack = $frames[$subject] ?? [];
+        if (!$stack) {
+            return false;
+        }
+        $started = array_pop($stack)['started'];
+        if ($stack) {
+            $frames[$subject] = $stack;
+        } else {
+            unset($frames[$subject]);
+        }
+        return $started;
+    }
 
     /**
      * @inheritdoc
@@ -50,8 +121,6 @@ class SqlInstrumentation extends AbstractInstrumentation
      */
     private static function instrumentSqlQuery(): void
     {
-        $limiter = SpanLimiter::getInstance();
-        $limiter->setLimits(['default' => self::SQL_QUERY_SPAN_LIMIT]);
         hook(
             Mysql::class,
             'query',
@@ -62,9 +131,14 @@ class SqlInstrumentation extends AbstractInstrumentation
                 string      $function,
                 ?string     $filename,
                 ?int        $lineno,
-            ) use ($limiter) {
-                $resolverClass = get_class($subject);
-                if (!$limiter->shouldStart($resolverClass)) {
+            ) {
+                // Magento interceptors wrap the base adapter and otherwise
+                // produce a second span for the same query. A nested query
+                // made by a plugin remains a distinct child span.
+                if (self::pushFrame($subject, $class)) {
+                    return;
+                }
+                if (!self::withinTraceLimit()) {
                     return;
                 }
 
@@ -77,7 +151,7 @@ class SqlInstrumentation extends AbstractInstrumentation
                 $builder = self::createSpanBuilder(
                     $spanName,
                     $function,
-                    $class,
+                    Mysql::class,
                     $filename,
                     $lineno,
                 )
@@ -93,22 +167,22 @@ class SqlInstrumentation extends AbstractInstrumentation
                         self::saferStringEncode(self::saferJsonEncode(self::extractElements($bind)))
                     )*/;
                 self::startSpanAndAttachToContext($builder);
+                self::markFrameStarted($subject);
             },
             static function (
                 Mysql       $subject,
                 array       $params,
                 mixed       $returnValue,
                 ?Throwable  $exception,
-            ) use ($limiter) {
-                $resolverClass = get_class($subject);
-                if ($limiter->wasSkipped($resolverClass)) {
+            ) {
+                if (!self::popFrame($subject)) {
                     return;
                 }
-
-                self::updateSpanWithRowCount($returnValue);
-                self::endSpan($exception);
-
-                $limiter->clear($resolverClass);
+                try {
+                    self::updateSpanWithRowCount($returnValue);
+                } finally {
+                    self::endSpan($exception);
+                }
             },
         );
     }
