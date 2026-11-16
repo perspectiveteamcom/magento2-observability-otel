@@ -11,6 +11,7 @@ namespace Mumzworld\OpenTelemetry\Instrumentation\Registrar;
 
 use Mumzworld\OpenTelemetry\Instrumentation\Core\EventObserverInstrumentation;
 use Mumzworld\OpenTelemetry\Instrumentation\Core\MagentoInstrumentation;
+use Mumzworld\OpenTelemetry\Instrumentation\Core\RouterInstrumentation;
 use Mumzworld\OpenTelemetry\Instrumentation\InstrumentationRegistrarInterface;
 
 class CoreInstrumentationRegistrar implements InstrumentationRegistrarInterface
@@ -22,6 +23,7 @@ class CoreInstrumentationRegistrar implements InstrumentationRegistrarInterface
     public static function register(): void
     {
         MagentoInstrumentation::register();
+        RouterInstrumentation::register();
         EventObserverInstrumentation::register();
     }
     //phpcs:enable Magento2.Functions.StaticFunction

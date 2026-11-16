@@ -227,7 +227,14 @@ class SqlInstrumentation extends AbstractInstrumentation
             return;
         }
 
-        $span->setAttribute('db.query.affected_rows', $returnValue->rowCount());
+        try {
+            $rowCount = $returnValue->rowCount();
+        } catch (Throwable) {
+            // Row counts are optional telemetry; never expose a driver error
+            // or affect a successfully completed application query.
+            return;
+        }
+        $span->setAttribute('db.query.affected_rows', $rowCount);
     }
 
     /**
