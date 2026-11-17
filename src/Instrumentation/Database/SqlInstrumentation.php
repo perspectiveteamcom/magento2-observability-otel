@@ -185,7 +185,7 @@ class SqlInstrumentation extends AbstractInstrumentation
                     ->setSpanKind(SpanKind::KIND_CLIENT)
                     ->setAttribute(
                         TraceAttributes::DB_QUERY_TEXT,
-                        self::saferStringEncode(self::truncateString($sqlString))
+                        self::saferStringEncode($sqlString)
                     )
                     // Note: Uncomment only if required. It might expose sensitive data.
                     // Don't forget to add back the $bind var: [$sqlString, $bind] = self::prepareQueryData($params);
