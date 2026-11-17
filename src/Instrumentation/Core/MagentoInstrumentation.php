@@ -116,6 +116,13 @@ class MagentoInstrumentation extends AbstractInstrumentation
                 // already active (for example one supplied by the distro).
                 $parent = null;
                 if (PHP_SAPI !== 'cli' && !Span::getCurrent()->getContext()->isValid()) {
+                    $uri = $_SERVER['REQUEST_URI'] ?? '';
+                    if (is_string($uri)) {
+                        $path = explode('?', $uri, 2)[0];
+                        if (str_starts_with($path, '/') && strlen($path) <= 2048 && !preg_match('/[\x00-\x1f\x7f]/', $path)) {
+                            $builder->setAttribute('url.path', $path);
+                        }
+                    }
                     $carrier = [];
                     foreach (Globals::propagator()->fields() as $field) {
                         $key = 'HTTP_' . strtoupper(str_replace('-', '_', $field));
