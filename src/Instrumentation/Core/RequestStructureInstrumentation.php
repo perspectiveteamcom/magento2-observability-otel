@@ -86,6 +86,19 @@ class RequestStructureInstrumentation extends AbstractInstrumentation
             'Controller: ' . str_replace('\\Interceptor', '', get_class($subject)));
         self::registerHook(ResultInterface::class, 'renderResult', static fn(object $subject): string =>
             'Result: ' . str_replace('\\Interceptor', '', get_class($subject)));
+        foreach ([
+            [\Magento\Framework\App\View::class, 'loadLayout', 'Layout load'],
+            [Layout::class, 'generateXml', 'Layout XML'],
+            [Layout::class, 'generateElements', 'Layout elements'],
+            [\Magento\Framework\View\Layout\GeneratorPool::class, 'process', 'Layout generators'],
+            [\Magento\Framework\View\Layout\GeneratorInterface::class, 'process', 'Layout generator'],
+            [\Magento\Framework\View\Element\AbstractBlock::class, 'setLayout', 'Block prepare'],
+            [\Magento\Catalog\Model\Layer\Filter\FilterInterface::class, 'apply', 'Layer filter'],
+            [\Magento\Framework\Data\Collection\AbstractDb::class, 'loadWithFilter', 'Collection fetch'],
+        ] as [$type, $method, $label]) {
+            self::registerHook($type, $method, static fn(object $subject): string =>
+                $label . ': ' . str_replace('\\Interceptor', '', get_class($subject)));
+        }
         self::registerHook(Layout::class, 'renderElement', static function (object $subject, array $params): string {
             $name = $params[0] ?? '';
             return is_string($name) && preg_match('/^[A-Za-z0-9_][A-Za-z0-9_.:-]{0,127}$/D', $name)
