@@ -26,7 +26,34 @@ class SqlInstrumentation extends AbstractInstrumentation
 {
     public const INSTRUMENTATION_NAME = 'io.opentelemetry.contrib.php.magento.sql';
     private const SPAN_NAME_PREFIX = 'SQL:';
-    private const SQL_QUERY_SPAN_LIMIT = 2048;
+    private const SQL_QUERY_SPAN_LIMIT = 6000;
+
+    /** Capture names only: no arguments, object values, or filesystem paths. */
+    private static function sqlCallStack(): string
+    {
+        $frames = [];
+        $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 129);
+        $truncated = count($trace) > 128;
+        foreach (array_slice($trace, 0, 128) as $frame) {
+            $class = $frame['class'] ?? '';
+            $method = $frame['function'] ?? '';
+            if (!is_string($class) || !is_string($method)
+                || str_starts_with($class, 'OpenTelemetry\\')
+                || str_starts_with($class, __CLASS__)
+                || ($class === Mysql::class && $method === 'query')
+                || ($class === MysqlInterceptor::class && $method === 'query')) {
+                continue;
+            }
+            if (strlen($class) > 256 || strlen($method) > 128
+                || ($class !== '' && !preg_match('/^[A-Za-z_\\\\][A-Za-z0-9_\\\\]*$/D', $class))
+                || !preg_match($class === '' ? '/^[A-Za-z_\\\\][A-Za-z0-9_\\\\]*$/D' : '/^[A-Za-z_][A-Za-z0-9_]*$/D', $method)) {
+                continue;
+            }
+            $frames[] = $class === '' ? $method . '()' : $class . '::' . $method;
+        }
+        if ($truncated) { $frames[] = '[stack truncated]'; }
+        return implode("\n", $frames);
+    }
 
     /** @var WeakMap<object, WeakMap<object, list<array{class: string, started: bool}>>>|null */
     private static ?WeakMap $framesByContext = null;
@@ -166,6 +193,12 @@ class SqlInstrumentation extends AbstractInstrumentation
                         TraceAttributes::DB_OPERATION_PARAMETER,
                         self::saferStringEncode(self::saferJsonEncode(self::extractElements($bind)))
                     )*/;
+                if (LocalRootSpan::current()->isRecording()) {
+                    $stack = self::sqlCallStack();
+                    if ($stack !== '') {
+                        $builder->setAttribute('magento.sql.call_stack', $stack);
+                    }
+                }
                 self::startSpanAndAttachToContext($builder);
                 self::markFrameStarted($subject);
             },
